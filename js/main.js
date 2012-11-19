@@ -1,7 +1,7 @@
 var canvas = $('#cancan');
 var canvas_element = canvas.get(0);
-var width = canvas.width();
-var height = canvas.height();
+var width = canvas_element.width = document.width;
+var height = canvas_element.height = document.height;
 var ctx = canvas_element.getContext("2d");
 var num_dots = 100;
 var dots = [];
@@ -11,16 +11,26 @@ var selected_dot = null;
 
 var createDots = function(){
 	for(var i = 0;i < num_dots;i++){
-		var max_radius = 20;
+		var max_radius = 26;
 		var radius = Math.random() * max_radius/3*2 + max_radius/3;
 		var speed = (max_radius - radius) * 3;
 		var color = '#'+Math.floor(Math.random()*16777215).toString(16);
+		var x = Math.random() * width;
+		var y = Math.random() * height;
+		var hsl = hexToHsl(color);
 		dots.push({
-			x : Math.random() * width,
-			y : Math.random() * height,
+			x : x,
+			y : y,
+			rx : x,
+			ry : y,
 			radius : radius,
+			expansion : 0,
+			visual_size : radius,
 			color : color,
-			hue : hexToHue(color),
+			hue : hsl[0],
+			sat : hsl[1],
+			lum : hsl[2],
+
 			vx : Math.random() * speed * 2 - speed,
 			vy : Math.random() * speed * 2 - speed
 		});
@@ -41,7 +51,9 @@ var render = function(){
 	for(var i = 0; i< l;i++){
 		var dot = dots[i];
 		ctx.beginPath();
-		ctx.arc(dot.x,dot.y,dot.radius,0,Math.PI*2,true);
+		dot.visual_size += ((dot.radius + dot.expansion) - dot.visual_size) / 10;
+
+		ctx.arc(dot.rx,dot.ry,dot.visual_size,0,Math.PI*2,true);
 		ctx.fillStyle = dot.color;
 		ctx.fillOpacity = 0.6;
 		ctx.fill();
@@ -52,22 +64,62 @@ var render = function(){
 var move = function(){
 	var l = dots.length;
 
-
 	for(var i = 0; i< l;i++){
 		var dot = dots[i];
 		var mouse_dist = mouseDist(dot.x,dot.y);
 		var catch_dist = 100;
 		var angle;
 		var hue_diff;
+		var hue_diff_sq;
+		var hue_force;
+		var dx;
+		var dy;
+		var disp;
+		var touch_dist;
+
+		dot.expansion = 0;
 
 		if(is_click_toggle){
-			hue_diff = hueDiff(selected_dot.hue,dot.hue);
-			angle = Math.atan2(selected_dot.x - dot.x,selected_dot.y - dot.y);
-			// dot.vx += Math.sin(angle) * (0.5 - hueDiff);
-			// dot.vy += Math.cos(angle) * (0.5 - hueDiff);
+
+
+			var dampen = false;
+			hue_diff = colDiff(selected_dot,dot);
+			hue_diff_sq = hue_diff * hue_diff;
+			dx = selected_dot.x - dot.x;
+			dy = selected_dot.y - dot.y;
+			angle = Math.atan2(dx,dy);
+			disp = distDisp(dx,dy);
+
+			var grow = Math.max(0,50-disp/2);
+			dot.expansion = grow;
 			selected_dot.x = mouse.x;
 			selected_dot.y = mouse.y;
 			selected_dot.vx = selected_dot.vy = 0;
+
+			// push close ones away, squared rel
+			touch_dist = dot.radius + dot.expansion + selected_dot.radius + selected_dot.expansion + 10;
+			
+			var selected_effect_dist = disp;
+
+			if(disp < touch_dist){
+				if( disp > 0){
+					var rep = 1 / (disp * disp) * 100000;
+					dot.vx -= Math.sin(angle) * rep;
+					dot.vy -= Math.cos(angle) * rep;
+					dot.vx *= 0.6;
+					dot.vy *= 0.6;
+				}
+
+			}else{
+				hue_force = ((0.05-hue_diff_sq) * (disp*disp)) / 1000;
+				// hue_force = ((0.05-hue_diff_sq) / (disp*disp)) * 100000;
+				hue_force = Math.min(1,hue_force);
+				dot.vx += Math.sin(angle) * hue_force;
+				dot.vy += Math.cos(angle) * hue_force;
+			}
+
+
+
 			for(var j = 0; j< l;j++){
 
 				/**
@@ -76,9 +128,10 @@ var move = function(){
 				*/
 
 				var dot_compare = dots[j];
+				touch_dist = dot.radius + dot.expansion + dot_compare.radius + dot_compare.expansion + 10;
 
 				
-				hue_diff = hueDiff(dot_compare.hue,dot.hue);
+				hue_diff = colDiff(dot_compare,dot);
 
 				var dx = dot_compare.x - dot.x;
 				var dy = dot_compare.y - dot.y;
@@ -86,31 +139,36 @@ var move = function(){
 				if(dx === 0 && dy === 0) continue;
 				var disp = distDisp(dx,dy);
 
-				// Attract similar colors / repel different, squared relationship
-
-				var hue_diff_sq = hue_diff * hue_diff;
-				var hue_force = (0.5 - hue_diff_sq) / 10;
-
-				dot.vx += Math.sin(angle) * hue_force;
-				dot.vy += Math.cos(angle) * hue_force;
+				
 
 
-				// push close ones away, squared rel
-				var touch_dist = dot.radius + dot_compare.radius + 10;
-				if(disp < touch_dist){
-					var rep = 1 / (disp * disp) * 1000;
-					dot.vx -= Math.sin(angle) * rep;
-					dot.vy -= Math.cos(angle) * rep;
-					dot.vx *= 0.99;
-					dot.vy *= 0.99;
+				if(selected_effect_dist < 1000){
+
+
+					if(disp < touch_dist){
+						if( disp > 0){
+							// push close ones away, squared rel
+							var rep = 1 / (disp * disp) * 50000;
+							dot.vx -= Math.sin(angle) * rep;
+							dot.vy -= Math.cos(angle) * rep;
+							
+							dampen = true;
+						}
+					}else{
+						// Attract similar colors / repel different, squared relationship
+						hue_diff_sq = hue_diff * hue_diff;
+						hue_force = ((0.5-hue_diff_sq) / (disp*disp)) * 1000;
+
+						//dot.vx += Math.sin(angle) * hue_force;
+						//dot.vy += Math.cos(angle) * hue_force;
+					}
+
 				}
-
-
 				
 			}
 
 
-		}else if(mouse_down){
+		}else{
 			if(mouse_dist < catch_dist / 3){
 				dot.vx *= 0.96;
 				dot.vy *= 0.96;
@@ -121,22 +179,56 @@ var move = function(){
 				dot.vx += Math.sin(angle) * mouse_dist/100;
 				dot.vy += Math.cos(angle) * mouse_dist/100;
 			}
+
+			for(var j = 0; j< l;j++){
+
+				/**
+				*	should attract similar colours, more the further away they are
+					all should push away anything close
+				*/
+
+				var dot_compare = dots[j];
+				var dx = dot_compare.x - dot.x;
+				var dy = dot_compare.y - dot.y;
+				angle = Math.atan2(dx,dy);
+				if(dx === 0 && dy === 0) continue;
+				var disp = distDisp(dx,dy);
+				touch_dist = dot.radius + dot.expansion + dot_compare.radius + dot_compare.expansion + 10;
+				if(disp < touch_dist){
+
+				
+				if( disp > 0){
+					
+				
+					// push close ones away, squared rel
+					var rep = 1 / (disp * disp) * 50000;
+					dot.vx -= Math.sin(angle) * rep;
+					dot.vy -= Math.cos(angle) * rep;
+					dot.vx *= 0.3;
+					dot.vy *= 0.3;
+					
+				}
+			}
+			}
+			
 		}
 		
-		var max = 10;
+		var max = 7;
 		if(dot.vx > max) dot.vx = max;
 		if(dot.vx < -max) dot.vx = -max;
 		if(dot.vy > max) dot.vy = max;
 		if(dot.vy < -max) dot.vy = -max;
 
+		if(dampen){
+			dot.vx *= 0.2;
+			dot.vy *= 0.2;
+		}else{
+			dot.vx *= 0.99;
+			dot.vy *= 0.99;
+		}
+
 		dot.x += dot.vx;
 		dot.y += dot.vy;
-
-
-
-		dot.vx *= 0.99;
-		dot.vy *= 0.99;
-
 
 		if(dot.x > width){
 			dot.x = width;
@@ -158,6 +250,9 @@ var move = function(){
 			dot.vy = -dot.vy;
 		}
 
+		dot.rx += (dot.x - dot.rx) / 10;
+		dot.ry += (dot.y - dot.ry) / 10;
+
 	}
 };
 
@@ -177,15 +272,28 @@ var dist = function(x1,y1,x2,y2){
 	return Math.sqrt((x2-x1)*(x2-x1) + (y2-y1)*(y2-y1));
 };
 
-var hueDiff = function(h1,h2){
-	var d = Math.abs(h1,h2);
-	if(d > 0.5) d = 1 - d;
- 	return d * 2;
+var colDiff = function(a,b){
+
+	var h = Math.abs(a.hue-b.hue);
+	if(h > 0.5) h = 1 - h;
+
+	// var s = Math.abs(a.sat-b.sat);
+	// if(s > 0.5) s = 1 - s;
+
+	// var l = Math.abs(a.lum-b.lum);
+	// if(l > 0.5) l = 1 - l;
+
+	return h * 2;
+
+ 	// return (h + s + l) * (2/3);
 };
 
-var hexToHue = function(color){
+
+
+
+var hexToHsl = function(color){
 	var rgb = hexToRgb(color);
-	return rgbToHsl(rgb.r,rgb.g,rgb.b)[0];
+	return rgbToHsl(rgb.r,rgb.g,rgb.b);
 };
 
 var hexToRgb = function(color){
